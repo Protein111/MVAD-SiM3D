@@ -3,11 +3,26 @@ from torch import optim as optim
 from timm.optim.adafactor import Adafactor
 from timm.optim.adahessian import Adahessian
 from timm.optim.adamp import AdamP
-from timm.optim.nadam import Nadam
-from timm.optim.radam import RAdam
-from timm.optim.rmsprop_tf import RMSpropTF
-from timm.optim.sgdp import SGDP
-from timm.optim.lookahead import Lookahead
+try:
+	from timm.optim.nadam import Nadam
+except Exception:
+	Nadam = getattr(optim, 'NAdam', None)
+try:
+	from timm.optim.radam import RAdam
+except Exception:
+	RAdam = getattr(optim, 'RAdam', None)
+try:
+	from timm.optim.rmsprop_tf import RMSpropTF
+except Exception:
+	RMSpropTF = None
+try:
+	from timm.optim.sgdp import SGDP
+except Exception:
+	SGDP = None
+try:
+	from timm.optim.lookahead import Lookahead
+except Exception:
+	Lookahead = None
 
 
 def check_keywords_in_name(name, keywords=()):
@@ -68,7 +83,15 @@ def get_optim(optim_kwargs, net, lr, betas=None, filter_bias_and_bn=True):
 		'adahessian': Adahessian,
 		'rmsproptf': RMSpropTF,
 	}
+	if optim_terms['nadam'] is None:
+		optim_terms.pop('nadam')
+	if optim_terms.get('radam') is None:
+		optim_terms.pop('radam', None)
+	if optim_terms.get('sgdp') is None:
+		optim_terms.pop('sgdp', None)
+	if optim_terms.get('rmsproptf') is None:
+		optim_terms.pop('rmsproptf', None)
 	optimizer = optim_terms[optim_name](params, lr=lr, **kwargs)
-	if optim_lookahead:
+	if optim_lookahead and Lookahead is not None:
 		optimizer = Lookahead(optimizer)
 	return optimizer

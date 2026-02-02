@@ -6,7 +6,7 @@ import logging
 import shutil
 import argparse
 import torch
-from tensorboardX import SummaryWriter
+# from tensorboardX import SummaryWriter
 from typing import Callable
 from functools import partial
 
@@ -89,7 +89,7 @@ def init_checkpoint(cfg):
             cfg.logdir = None
         cfg.trainer.iter, cfg.trainer.epoch = 0, 0
     cfg.logger = get_logger(cfg) if cfg.master else None
-    cfg.writer = SummaryWriter(log_dir=cfg.logdir, comment='') if cfg.master else None
+    # cfg.writer = SummaryWriter(log_dir=cfg.logdir, comment='') if cfg.master else None
     log_msg(cfg.logger, f'==> Logging on master GPU: {cfg.logger_rank}')
 
 

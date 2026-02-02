@@ -3,7 +3,10 @@ import torch
 import torch.nn as nn
 import cv2
 from PIL import Image
-import accimage
+try:
+	import accimage
+except Exception:
+	accimage = None
 import torchvision
 import torchvision.transforms as transforms
 from skimage import color
@@ -19,6 +22,8 @@ def pil_loader_L(path):
 	return Image.open(path).convert('L')
 
 def accimage_loader(path):
+	if accimage is None:
+		raise ImportError("accimage is not installed")
 	return accimage.Image(path)
 	
 def get_img_loader(loader_type):
@@ -29,6 +34,8 @@ def get_img_loader(loader_type):
 	elif loader_type == 'pil_L':
 		return pil_loader_L
 	elif loader_type == 'accimage':
+		if accimage is None:
+			return pil_loader
 		torchvision.set_image_backend('accimage')
 		return accimage_loader
 	else:

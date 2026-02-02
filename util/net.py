@@ -11,10 +11,14 @@ import torch.backends.cudnn as cudnn
 import torch.distributed as dist
 import math
 import time
-from collections import Iterable
+from collections.abc import Iterable
 from timm.utils.agc import adaptive_clip_grad
 from util.util import log_msg
-from fvcore.nn import FlopCountAnalysis, flop_count_table
+try:
+	from fvcore.nn import FlopCountAnalysis, flop_count_table
+except Exception:
+	FlopCountAnalysis = None
+	flop_count_table = None
 from timm.utils import NativeScaler, ApexScaler
 from contextlib import suppress, contextmanager
 
@@ -164,8 +168,11 @@ def print_networks(models, xs, logger):
 		# 		result += '==> {}: {:<3.3f}M\n'.format(grandname, num_params)
 		# total_num_params_with_parameter_vars = sum(p.numel() for p in model.parameters() if p.requires_grad) / 1e6
 		# result += '[Network {}] Total number of parameters: {:<.3f}M (with parameter_vars: {:<.3f}M)\n'.format(type(model).__name__, total_num_params, total_num_params_with_parameter_vars)
-		flops = FlopCountAnalysis(model, x)
-		result += '{}\n'.format(flop_count_table(flops, max_depth=5))
+		if FlopCountAnalysis is not None and flop_count_table is not None:
+			flops = FlopCountAnalysis(model, x)
+			result += '{}\n'.format(flop_count_table(flops, max_depth=5))
+		else:
+			result += '[FLOPs] fvcore not installed; skipping FLOPs table\n'
 		result += '-' * (72 + 2 + len(type(model).__name__))
 		log_msg(logger, result)
 

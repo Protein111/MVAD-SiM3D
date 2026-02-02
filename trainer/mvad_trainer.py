@@ -1,11 +1,6 @@
 import os
-import copy
-import glob
+import re
 import shutil
-import datetime
-import time
-
-import tabulate
 import torch
 from util.util import makedirs, log_cfg, able, log_msg, get_log_terms, update_log_term
 from util.net import trans_state_dict, print_networks, get_timepc, reduce_tensor
@@ -21,12 +16,14 @@ from timm.data import Mixup
 import numpy as np
 from torch.nn.parallel import DistributedDataParallel as NativeDDP
 
-try:
-    from apex import amp
-    from apex.parallel import DistributedDataParallel as ApexDDP
-    from apex.parallel import convert_syncbn_model as ApexSyncBN
-except:
-    from timm.layers.norm_act import convert_sync_batchnorm as ApexSyncBN
+# try:
+#     from apex import amp
+#     from apex.parallel import DistributedDataParallel as ApexDDP
+#     from apex.parallel import convert_syncbn_model as ApexSyncBN
+# except:
+#     from timm.layers.norm_act import convert_sync_batchnorm as ApexSyncBN
+
+from timm.layers.norm_act import convert_sync_batchnorm as ApexSyncBN
 from timm.layers.norm_act import convert_sync_batchnorm as TIMMSyncBN
 from timm.utils import dispatch_clip_grad
 
@@ -42,9 +39,11 @@ class MVADTrainer(BaseTrainer):
     def set_input(self, inputs):
         self.imgs = inputs['img'].cuda()
         self.imgs_mask = inputs['img_mask'].cuda()
-        if len(self.imgs.shape) != 4:
-            self.imgs = self.imgs.view(self.imgs.shape[0] * 5, *self.imgs.size()[2:])
-            self.imgs_mask = self.imgs_mask.view(self.imgs_mask.shape[0] * 5, *self.imgs_mask.size()[2:])
+        if self.imgs.dim() == 5:
+            batch_size, view_count = self.imgs.shape[:2]
+            self.imgs = self.imgs.view(batch_size * view_count, *self.imgs.size()[2:])
+            if self.imgs_mask.dim() == 5:
+                self.imgs_mask = self.imgs_mask.view(batch_size * view_count, *self.imgs_mask.size()[2:])
         if isinstance(inputs['cls_name'][0], str):
             self.cls_name = list(inputs['cls_name'])
             self.anomaly = torch.tensor(list(inputs['anomaly']))
@@ -90,7 +89,7 @@ class MVADTrainer(BaseTrainer):
                 shutil.rmtree(self.tmp_dir)
             os.makedirs(self.tmp_dir, exist_ok=True)
         self.reset(isTrain=False)
-        imgs_masks, anomaly_maps, cls_names, anomalys, sample_anomalys, sample_predicts = [], [], [], [], [], []
+        sample_view_counts = {}
         batch_idx = 0
         test_length = self.cfg.data.test_size
         test_loader = iter(self.test_loader)
@@ -102,15 +101,32 @@ class MVADTrainer(BaseTrainer):
             test_data = next(test_loader)
             self.set_input(test_data)
             self.forward()
-            loss_mse = self.loss_terms['pixel'](self.feats_t, self.feats_s)
-            update_log_term(self.log_terms.get('pixel'),
-                            reduce_tensor(loss_mse, self.world_size).clone().detach().item(),
-                            1, self.master)
             # get anomaly maps
             anomaly_map, _ = self.evaluator.cal_anomaly_map(self.feats_t, self.feats_s,
                                                             [self.imgs.shape[2], self.imgs.shape[3]], uni_am=False,
                                                             amap_mode='add', gaussian_sigma=4)
             self.imgs_mask[self.imgs_mask > 0.5], self.imgs_mask[self.imgs_mask <= 0.5] = 1, 0
+            for idx, img_path in enumerate(self.imgs_path):
+                if img_path is None:
+                    continue
+                full_img_path = os.path.join(self.cfg.data.root, str(img_path).lstrip('/'))
+                sample_dir = os.path.dirname(os.path.dirname(full_img_path))
+                mvad_dir = os.path.join(sample_dir, 'MVAD')
+                os.makedirs(mvad_dir, exist_ok=True)
+                base_name = os.path.splitext(os.path.basename(full_img_path))[0]
+                parts = base_name.split('_')
+                if len(parts) >= 2 and parts[0].isdigit():
+                    view_id = parts[0].zfill(2)
+                else:
+                    match = re.search(r'(\d+)$', base_name)
+                    if match:
+                        view_id = match.group(1).zfill(2)
+                    else:
+                        view_idx = sample_view_counts.get(sample_dir, 0) + 1
+                        sample_view_counts[sample_dir] = view_idx
+                        view_id = f"{view_idx:02d}"
+                out_path = os.path.join(mvad_dir, f"{view_id}.npy")
+                np.save(out_path, anomaly_map[idx])
             if self.cfg.vis and self.master:
                 if self.cfg.vis_dir is not None:
                     root_out = self.cfg.vis_dir
@@ -118,14 +134,6 @@ class MVADTrainer(BaseTrainer):
                     root_out = self.writer.logdir
                 vis_rgb_gt_amp(self.imgs_path, self.imgs, self.imgs_mask.cpu().numpy().astype(int), anomaly_map,
                                self.cfg.model.name, root_out, self.cfg.data.root.split('/')[1])
-            imgs_masks.append(self.imgs_mask.cpu().numpy().astype(int))
-            anomaly_maps.append(anomaly_map)
-            cls_names.append(np.array(self.cls_name))
-            anomalys.append(self.anomaly.cpu().numpy().astype(int))
-            # sample predict and mask
-            sample_predict = anomaly_map.max(axis=(1, 2))
-            sample_predicts.append(sample_predict)
-            sample_anomalys.append(self.sample_anomaly.cpu().numpy().astype(int))
             t2 = get_timepc()
             update_log_term(self.log_terms.get('batch_t'), t2 - t1, 1, self.master)
             print(f'\r{batch_idx}/{test_length}', end='') if self.master else None
@@ -134,58 +142,4 @@ class MVADTrainer(BaseTrainer):
                 if batch_idx % self.cfg.logging.test_log_per == 0 or batch_idx == test_length:
                     msg = able(self.progress.get_msg(batch_idx, test_length, 0, 0, prefix=f'Test'), self.master, None)
                     log_msg(self.logger, msg)
-        # merge results
-        if self.cfg.dist:
-            results = dict(imgs_masks=imgs_masks, anomaly_maps=anomaly_maps, cls_names=cls_names, anomalys=anomalys)
-            torch.save(results, f'{self.tmp_dir}/{self.rank}.pth', _use_new_zipfile_serialization=False)
-            if self.master:
-                results = dict(imgs_masks=[], anomaly_maps=[], cls_names=[], anomalys=[])
-                valid_results = False
-                while not valid_results:
-                    results_files = glob.glob(f'{self.tmp_dir}/*.pth')
-                    if len(results_files) != self.cfg.world_size:
-                        time.sleep(1)
-                    else:
-                        idx_result = 0
-                        while idx_result < self.cfg.world_size:
-                            results_file = results_files[idx_result]
-                            try:
-                                result = torch.load(results_file)
-                                for k, v in result.items():
-                                    results[k].extend(v)
-                                idx_result += 1
-                            except:
-                                time.sleep(1)
-                        valid_results = True
-        else:
-            results = dict(imgs_masks=imgs_masks, anomaly_maps=anomaly_maps, cls_names=cls_names, anomalys=anomalys,
-                           smp_pre=sample_predicts, smp_masks=sample_anomalys)
-        if self.master:
-            results = {k: np.concatenate(v, axis=0) for k, v in results.items()}
-            msg = {}
-            for idx, cls_name in enumerate(self.cls_names):
-                metric_results = self.evaluator.run(results, cls_name, self.logger)
-                msg['Name'] = msg.get('Name', [])
-                msg['Name'].append(cls_name)
-                avg_act = True if len(self.cls_names) > 1 and idx == len(self.cls_names) - 1 else False
-                msg['Name'].append('Avg') if avg_act else None
-                # msg += f'\n{cls_name:<10}'
-                for metric in self.metrics:
-                    metric_result = metric_results[metric] * 100
-                    self.metric_recorder[f'{metric}_{cls_name}'].append(metric_result)
-                    max_metric = max(self.metric_recorder[f'{metric}_{cls_name}'])
-                    max_metric_idx = self.metric_recorder[f'{metric}_{cls_name}'].index(max_metric) + 1
-                    msg[metric] = msg.get(metric, [])
-                    msg[metric].append(metric_result)
-                    msg[f'{metric} (Max)'] = msg.get(f'{metric} (Max)', [])
-                    msg[f'{metric} (Max)'].append(f'{max_metric:.3f} ({max_metric_idx:<3d} epoch)')
-                    if avg_act:
-                        metric_result_avg = sum(msg[metric]) / len(msg[metric])
-                        self.metric_recorder[f'{metric}_Avg'].append(metric_result_avg)
-                        max_metric = max(self.metric_recorder[f'{metric}_Avg'])
-                        max_metric_idx = self.metric_recorder[f'{metric}_Avg'].index(max_metric) + 1
-                        msg[metric].append(metric_result_avg)
-                        msg[f'{metric} (Max)'].append(f'{max_metric:.3f} ({max_metric_idx:<3d} epoch)')
-            msg = tabulate.tabulate(msg, headers='keys', tablefmt="pipe", floatfmt='.3f', numalign="center",
-                                    stralign="center", )
-            log_msg(self.logger, f'\n{msg}')
+            

@@ -3,7 +3,6 @@ import copy
 import glob
 import shutil
 import datetime
-import tabulate
 import torch
 from util.util import makedirs, log_cfg, able, log_msg, get_log_terms, update_log_term
 from util.net import trans_state_dict, print_networks, get_timepc, reduce_tensor
@@ -35,9 +34,13 @@ from timm.utils import dispatch_clip_grad
 class BaseTrainer():
     def __init__(self, cfg):
         self.cfg = cfg
-        self.master, self.logger, self.writer = cfg.master, cfg.logger, cfg.writer
+        # self.master, self.logger, self.writer = cfg.master, cfg.logger, cfg.writer
+        # self.local_rank, self.rank, self.world_size = cfg.local_rank, cfg.rank, cfg.world_size
+        # log_msg(self.logger, '==> Running Trainer: {}'.format(cfg.trainer.name))
+        self.master = getattr(cfg, 'master', True)
+        self.logger = getattr(cfg, 'logger', None)
+        self.writer = getattr(cfg, 'writer', None)
         self.local_rank, self.rank, self.world_size = cfg.local_rank, cfg.rank, cfg.world_size
-        log_msg(self.logger, '==> Running Trainer: {}'.format(cfg.trainer.name))
         # =========> model <=================================
         log_msg(self.logger, '==> Using GPU: {} for Training'.format(list(range(cfg.world_size))))
         log_msg(self.logger, '==> Building model')

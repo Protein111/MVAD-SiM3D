@@ -3,7 +3,9 @@ from timm.data.constants import IMAGENET_DEFAULT_MEAN
 from timm.data.constants import IMAGENET_DEFAULT_STD
 import torchvision.transforms.functional as F
 
-from configs.__base__ import *
+from configs.__base__.cfg_common import cfg_common
+from configs.__base__.cfg_dataset_default import cfg_dataset_default
+from configs.__base__.cfg_model_mvad import cfg_model_mvad
 
 
 class cfg(cfg_common, cfg_dataset_default, cfg_model_mvad):
