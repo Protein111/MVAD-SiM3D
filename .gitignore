@@ -1,0 +1,94 @@
+############################
+# IDE / Editor
+############################
+.idea/
+.vscode/
+*.swp
+*.swo
+
+############################
+# Python
+############################
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+
+
+############################
+# README
+############################
+README.md
+
+############################
+# Logs
+############################
+*.log
+logs/
+log/
+
+############################
+# Cache / Temp
+############################
+.cache/
+*.cache
+*.tmp
+*.temp
+*.bak
+
+############################
+# Local env / secrets
+############################
+.env
+.env.*
+*.env
+
+############################
+# OS / System
+############################
+.DS_Store
+Thumbs.db
+
+############################
+# Jupyter
+############################
+.ipynb_checkpoints/
+
+############################
+# Training / Runtime outputs
+############################
+outputs/
+results/
+checkpoints/
+runs/
+wandb/
+
+############################
+# Local absolute-path files
+############################
+*.pth
+*.ckpt
+*.pt
+*.onnx
+*.h5
+*.md
+
+############################
+# Data (usually not committed)
+############################
+data/
+dataset_cache/
+
+# Temporary / unused materials
+暂时不用的材料/
+
+# Checkpoints
+checkpoint/
+
+# Check data
+toy_code/
+
+# log
+lightning_logs/
